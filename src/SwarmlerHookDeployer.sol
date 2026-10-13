@@ -7,34 +7,33 @@ import {SwarmlerFeeHook} from "./SwarmlerFeeHook.sol";
 
 /// @notice Launchable helper; the permission-addressed hook is created after launch with a mined salt.
 /// @dev Runtime receives the exact approved creation code, avoiding an oversized embedded child runtime.
+///      The PoolManager is a constructor argument stored without a code probe, because launch constructors
+///      run on an empty chain; its code is required on first use.
 contract SwarmlerHookDeployer is Ownable2Step {
     bytes32 public immutable hookCreationCodeHash;
     address public immutable collection;
     address public immutable launchToken;
-    address public poolManager;
+    address public immutable poolManager;
     address public hook;
 
     error InvalidConfiguration();
-    error PoolManagerNotConfigured();
+    error PoolManagerNotDeployed();
     error AlreadyDeployed();
     error WrongCreationCode();
     error DeploymentFailed();
 
-    event PoolManagerConfigured(address indexed manager);
     event HookDeployed(address indexed hook, bytes32 indexed salt, address indexed hookOwner);
 
-    constructor(address initialOwner, address nftCollection, address token) Ownable(initialOwner) {
-        if (nftCollection == address(0) || token == address(0)) revert InvalidConfiguration();
+    constructor(address initialOwner, address nftCollection, address token, address manager)
+        Ownable(initialOwner)
+    {
+        if (nftCollection == address(0) || token == address(0) || manager == address(0)) {
+            revert InvalidConfiguration();
+        }
         collection = nftCollection;
         launchToken = token;
-        hookCreationCodeHash = keccak256(type(SwarmlerFeeHook).creationCode);
-    }
-
-    function setPoolManager(address manager) external onlyOwner {
-        if (hook != address(0)) revert AlreadyDeployed();
-        if (manager.code.length == 0) revert InvalidConfiguration();
         poolManager = manager;
-        emit PoolManagerConfigured(manager);
+        hookCreationCodeHash = keccak256(type(SwarmlerFeeHook).creationCode);
     }
 
     function initCodeHash(bytes calldata creationCode) public view returns (bytes32) {
@@ -65,7 +64,7 @@ contract SwarmlerHookDeployer is Ownable2Step {
     }
 
     function _initCode(bytes calldata creationCode) private view returns (bytes memory) {
-        if (poolManager == address(0)) revert PoolManagerNotConfigured();
+        if (poolManager.code.length == 0) revert PoolManagerNotDeployed();
         if (keccak256(creationCode) != hookCreationCodeHash) revert WrongCreationCode();
         return abi.encodePacked(creationCode, abi.encode(owner(), poolManager, collection, launchToken));
     }

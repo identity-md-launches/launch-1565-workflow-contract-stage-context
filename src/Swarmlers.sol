@@ -166,6 +166,13 @@ contract Swarmlers is ERC721, Ownable2Step, ReentrancyGuard {
         return rewardReserve + totalAllocated - totalClaimed + creatorCredit;
     }
 
+    /// @notice Reward funding the ledger can still absorb: the lifetime cap of every possible NFT minus
+    ///         what is already allocated or reserved. Checkpoints move reserve to allocation, so this
+    ///         is exact without one. Zero means every further deposit is credited to the creator.
+    function remainingRewardCapacity() public view returns (uint256) {
+        return MAX_SUPPLY * LIFETIME_CAP - totalAllocated - rewardReserve;
+    }
+
     function checkpoint() external {
         _checkpoint();
     }
@@ -290,13 +297,21 @@ contract Swarmlers is ERC721, Ownable2Step, ReentrancyGuard {
         _accountProceeds(amount);
     }
 
+    /// @dev Called after a checkpoint. Reward funding beyond the collection's lifetime capacity has no
+    ///      holder who could ever claim it, so that part is credited to the creator instead of a dead reserve.
     function _accountProceeds(uint256 amount) private {
         // Floor the creator's share; sub-10-wei rounding belongs to rewards.
         uint256 creatorShare = amount / 10;
+        uint256 rewardShare = amount - creatorShare;
+        uint256 capacity = remainingRewardCapacity();
+        if (rewardShare > capacity) {
+            creatorShare += rewardShare - capacity;
+            rewardShare = capacity;
+        }
         creatorCredit += creatorShare;
-        rewardReserve += amount - creatorShare;
+        rewardReserve += rewardShare;
         totalProceeds += amount;
-        emit ProceedsDeposited(msg.sender, amount, amount - creatorShare, creatorShare);
+        emit ProceedsDeposited(msg.sender, amount, rewardShare, creatorShare);
     }
 
     function _checkpoint() private {

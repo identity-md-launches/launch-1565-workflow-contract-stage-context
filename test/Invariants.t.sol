@@ -106,6 +106,7 @@ contract RewardInvariantTest is Fixture {
         assertEq(allocated, nft.totalAllocated());
         assertEq(paid, nft.totalClaimed());
         assertLe(nft.totalAllocated(), nft.totalMinted() * 1 ether);
+        assertEq(nft.remainingRewardCapacity(), 2500 ether - nft.totalAllocated() - nft.rewardReserve());
     }
 
     function invariant_supplyAndLifetimeCapNeverReset() public view {

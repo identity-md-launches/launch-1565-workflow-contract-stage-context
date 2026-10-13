@@ -16,6 +16,11 @@
         "name": "token",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "manager",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -194,19 +199,6 @@
   },
   {
     "type": "function",
-    "name": "setPoolManager",
-    "inputs": [
-      {
-        "name": "manager",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -282,19 +274,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "PoolManagerConfigured",
-    "inputs": [
-      {
-        "name": "manager",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "AlreadyDeployed",
     "inputs": []
@@ -333,7 +312,7 @@
   },
   {
     "type": "error",
-    "name": "PoolManagerNotConfigured",
+    "name": "PoolManagerNotDeployed",
     "inputs": []
   },
   {

@@ -24,6 +24,7 @@ Machine-readable ABI arrays are in `docs/abi/<Contract>.json`. Regenerate after 
 | `checkpoint()` | Anyone; materialize funded elapsed-time accrual and retire capped cohorts |
 | `previewRewardState() -> (index, reserve, firstActiveId)` | Read-only equivalent of the next reward checkpoint |
 | `rewardReserve()`, `totalAllocated()`, `totalClaimed()`, `creatorCredit()`, `accountedBalance()` | Stored custody ledger; preview to obtain post-accrual reserve |
+| `remainingRewardCapacity()` | 2,500 IMD lifetime bound minus allocated and reserved; exact without a checkpoint; zero means further proceeds are credited to the creator |
 | `setRewardDuration(seconds)` | Owner, once; 1–3,650 days |
 | `openPublicMint()` | Owner, once; requires duration and configured activity reporter |
 | `refreshMetadata(id)` | Anyone; emit ERC-4906 cache refresh |
@@ -38,7 +39,7 @@ Machine-readable ABI arrays are in `docs/abi/<Contract>.json`. Regenerate after 
 
 ## Helper and child hook
 
-`SwarmlerHookDeployer.setPoolManager(address)` is owner-only and requires deployed code. `hookCreationCodeHash()` commits to the exact bare creation code produced by this build. `initCodeHash(creationCode)` adds the current owner, configured manager, collection, and token arguments. `predict(creationCode, salt)` computes the resulting address. `deploy(creationCode, salt)` is owner-only and can succeed once. `hook()` is unset until deployment. Listen for `PoolManagerConfigured` and `HookDeployed`.
+`SwarmlerHookDeployer.poolManager()` is the immutable PoolManager given at launch. `hookCreationCodeHash()` commits to the exact bare creation code produced by this build. `initCodeHash(creationCode)` adds the current owner, manager, collection, and token arguments; it and `predict(creationCode, salt)`, which computes the resulting address, revert with `PoolManagerNotDeployed` while the manager address has no code. `deploy(creationCode, salt)` is owner-only and can succeed once. `hook()` is unset until deployment. Listen for `HookDeployed`.
 
 After deployment, the child's `poolKey()` returns the full sorted `(currency0, currency1, fee, tickSpacing, hooks)` tuple; `getHookPermissions()` returns its v4 permission struct. Callback ABIs match the vendored v4.0.0 release exactly and are reserved for the configured PoolManager.
 

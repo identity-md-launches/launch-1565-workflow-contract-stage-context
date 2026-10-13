@@ -31,8 +31,7 @@ contract HookTest is Fixture {
         token = new LaunchToken();
         manager = new PoolManager(address(this));
         actions = new V4Actions(manager);
-        deployer = new SwarmlerHookDeployer(address(this), address(nft), address(token));
-        deployer.setPoolManager(address(manager));
+        deployer = new SwarmlerHookDeployer(address(this), address(nft), address(token), address(manager));
         bytes memory code = type(SwarmlerFeeHook).creationCode;
         salt = _mine(address(deployer), deployer.initCodeHash(code));
         hook = SwarmlerFeeHook(deployer.deploy(code, salt));
@@ -203,30 +202,33 @@ contract HookTest is Fixture {
         IHooks(address(hook)).beforeDonate(alice, key, 1, 1, "");
     }
 
-    function test_deployerUnconfiguredWrongCodeAndDuplicateDeployment() public {
-        SwarmlerHookDeployer fresh = new SwarmlerHookDeployer(address(this), address(nft), address(token));
-        vm.expectRevert(SwarmlerHookDeployer.PoolManagerNotConfigured.selector);
-        fresh.deploy(type(SwarmlerFeeHook).creationCode, bytes32(0));
+    function test_deployerManagerWithoutCodeWrongCodeAndDuplicateDeployment() public {
+        bytes memory code = type(SwarmlerFeeHook).creationCode;
         vm.expectRevert(SwarmlerHookDeployer.InvalidConfiguration.selector);
-        fresh.setPoolManager(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
-        vm.prank(alice);
-        fresh.setPoolManager(address(manager));
-        fresh.setPoolManager(address(manager));
+        new SwarmlerHookDeployer(address(this), address(nft), address(token), address(0));
+        // A manager address without code is accepted by the constructor and refused on first use.
+        SwarmlerHookDeployer early =
+            new SwarmlerHookDeployer(address(this), address(nft), address(token), alice);
+        assertEq(early.poolManager(), alice);
+        vm.expectRevert(SwarmlerHookDeployer.PoolManagerNotDeployed.selector);
+        early.initCodeHash(code);
+        vm.expectRevert(SwarmlerHookDeployer.PoolManagerNotDeployed.selector);
+        early.deploy(code, bytes32(0));
+        assertEq(early.hook(), address(0));
+        SwarmlerHookDeployer fresh =
+            new SwarmlerHookDeployer(address(this), address(nft), address(token), address(manager));
         vm.expectRevert(SwarmlerHookDeployer.WrongCreationCode.selector);
         fresh.deploy(hex"1234", bytes32(0));
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         vm.prank(alice);
-        fresh.deploy(type(SwarmlerFeeHook).creationCode, bytes32(0));
+        fresh.deploy(code, bytes32(0));
         vm.expectRevert(SwarmlerHookDeployer.AlreadyDeployed.selector);
-        deployer.deploy(type(SwarmlerFeeHook).creationCode, salt);
-        vm.expectRevert(SwarmlerHookDeployer.AlreadyDeployed.selector);
-        deployer.setPoolManager(address(manager));
+        deployer.deploy(code, salt);
     }
 
     function test_wrongPermissionSaltFailsAndNoDeploymentIsRecorded() public {
-        SwarmlerHookDeployer fresh = new SwarmlerHookDeployer(address(this), address(nft), address(token));
-        fresh.setPoolManager(address(manager));
+        SwarmlerHookDeployer fresh =
+            new SwarmlerHookDeployer(address(this), address(nft), address(token), address(manager));
         bytes32 badSalt;
         if (uint160(fresh.predict(type(SwarmlerFeeHook).creationCode, badSalt)) & 0x3fff == 0x2503) {
             badSalt = bytes32(uint256(1));

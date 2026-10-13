@@ -120,6 +120,71 @@ contract RewardsTest is Fixture {
         _assertSolvent();
     }
 
+    function test_fundingBeyondLifetimeCapacityIsCreditedToCreator() public {
+        assertEq(nft.remainingRewardCapacity(), 2500 ether);
+        nft.depositProceeds(2600 ether);
+        assertEq(nft.rewardReserve(), 2340 ether);
+        assertEq(nft.creatorCredit(), 260 ether);
+        assertEq(nft.remainingRewardCapacity(), 160 ether);
+        vm.expectEmit(true, false, false, true);
+        emit Swarmlers.ProceedsDeposited(address(this), 1000 ether, 160 ether, 840 ether);
+        nft.depositProceeds(1000 ether);
+        assertEq(nft.rewardReserve(), 2500 ether);
+        assertEq(nft.creatorCredit(), 1100 ether);
+        assertEq(nft.remainingRewardCapacity(), 0);
+        // With the reserve already able to fund every possible NFT, a mint's proceeds go to the creator.
+        uint256 id = _mint(alice);
+        assertEq(nft.rewardReserve(), 2500 ether);
+        assertEq(nft.creatorCredit(), 1100.25 ether);
+        vm.expectRevert(Swarmlers.ZeroAmount.selector);
+        nft.syncProceeds();
+        imd.transfer(address(nft), 7);
+        nft.syncProceeds();
+        assertEq(nft.creatorCredit(), 1100.25 ether + 7);
+        assertEq(nft.totalProceeds(), 3600.25 ether + 7);
+        // Capacity is a function of allocation plus reserve, so accrual does not change it.
+        skip(31 days);
+        nft.checkpoint();
+        assertEq(nft.totalAllocated(), 26 ether);
+        assertEq(nft.rewardReserve(), 2474 ether);
+        assertEq(nft.remainingRewardCapacity(), 0);
+        assertEq(nft.earned(id), 1 ether);
+        nft.withdrawCreator();
+        assertEq(imd.balanceOf(CREATOR), 1100.25 ether + 7);
+        _assertSolvent();
+    }
+
+    function test_noRewardIsStrandedOnceEveryNFTHasCapped() public {
+        vm.startPrank(alice);
+        for (uint256 i = 26; i <= 2500; ++i) {
+            nft.mint();
+        }
+        vm.stopPrank();
+        assertEq(nft.rewardReserve(), 556.875 ether);
+        nft.depositProceeds(3000 ether);
+        assertEq(nft.rewardReserve(), 2500 ether);
+        assertEq(nft.creatorCredit(), 61.875 ether + 300 ether + 756.875 ether);
+        skip(31 days);
+        nft.checkpoint();
+        assertEq(nft.firstActiveId(), 2501);
+        assertEq(nft.totalAllocated(), 2500 ether);
+        assertEq(nft.rewardReserve(), 0);
+        assertEq(nft.remainingRewardCapacity(), 0);
+        uint256 creditBefore = nft.creatorCredit();
+        nft.depositProceeds(10 ether); // Same path as the hook's forwardFees after every NFT is capped.
+        assertEq(nft.rewardReserve(), 0);
+        assertEq(nft.creatorCredit() - creditBefore, 10 ether);
+        skip(365 days);
+        nft.checkpoint();
+        assertEq(nft.rewardReserve(), 0);
+        assertEq(nft.claimable(2500), 1 ether);
+        vm.prank(alice);
+        assertEq(nft.claimReward(2500), 1 ether);
+        nft.withdrawCreator();
+        assertEq(imd.balanceOf(address(nft)), nft.totalAllocated() - nft.totalClaimed());
+        _assertSolvent();
+    }
+
     function test_batchClaimsRejectDuplicatesAndForeignNFTAtomically() public {
         uint256 first = _mint(alice);
         uint256 second = _mint(alice);

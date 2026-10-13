@@ -114,5 +114,10 @@ abstract contract Fixture is Test {
             nft.totalProceeds(), imd.balanceOf(address(nft)) + nft.totalClaimed() + nft.totalCreatorPaid()
         );
         assertLe(nft.totalClaimed(), nft.totalAllocated());
+        assertLe(
+            nft.totalAllocated() + nft.rewardReserve(),
+            nft.MAX_SUPPLY() * nft.LIFETIME_CAP(),
+            "reserve must never exceed lifetime capacity"
+        );
     }
 }
