@@ -243,4 +243,91 @@ contract RewardsAdversarialTest is Fixture {
         vm.expectRevert(Swarmlers.ZeroAmount.selector);
         fresh.syncProceeds();
     }
+
+    /// @dev Oracle for the deposit split, independent of the contract's capacity view: reward credit so
+    ///      far is every proceed that was not credited to the creator, and the brief caps it at 2,500 IMD.
+    function _expectedSplit(uint256 amount) internal view returns (uint256 rewards, uint256 creatorShare) {
+        uint256 credited = nft.totalProceeds() - nft.creatorCredit() - nft.totalCreatorPaid();
+        uint256 capacity = 2500 ether - credited;
+        creatorShare = amount / 10;
+        rewards = amount - creatorShare;
+        if (rewards > capacity) {
+            creatorShare += rewards - capacity;
+            rewards = capacity;
+        }
+    }
+
+    /// forge-config: default.fuzz.runs = 1000
+    function testFuzz_depositSplitIsNinetyPercentUntilLifetimeCapacityThenCreator(
+        uint128 rawPrior,
+        uint128 rawAmount,
+        uint32 rawElapsed,
+        bool viaSync
+    ) public {
+        uint256 prior = bound(rawPrior, 1, 3000 ether);
+        uint256 amount = bound(rawAmount, 1, 3000 ether);
+        _mint(alice);
+        nft.depositProceeds(prior);
+        skip(bound(rawElapsed, 0, 60 days));
+        nft.checkpoint();
+        (uint256 rewards, uint256 creatorShare) = _expectedSplit(amount);
+        uint256 reserveBefore = nft.rewardReserve();
+        uint256 creditBefore = nft.creatorCredit();
+        uint256 allocatedBefore = nft.totalAllocated();
+        if (viaSync) imd.transfer(address(nft), amount);
+        vm.expectEmit(true, false, false, true);
+        emit Swarmlers.ProceedsDeposited(address(this), amount, rewards, creatorShare);
+        if (viaSync) nft.syncProceeds();
+        else nft.depositProceeds(amount);
+        assertEq(rewards + creatorShare, amount, "split lost or created value");
+        assertEq(nft.rewardReserve() - reserveBefore, rewards);
+        assertEq(nft.creatorCredit() - creditBefore, creatorShare);
+        assertEq(nft.totalAllocated(), allocatedBefore, "a deposit changed past allocation");
+        assertGe(creatorShare, amount / 10, "the creator never receives less than 10%");
+        assertLe(nft.totalAllocated() + nft.rewardReserve(), 2500 ether);
+        if (nft.totalAllocated() + nft.rewardReserve() < 2500 ether) {
+            assertEq(creatorShare, amount / 10, "overflow was credited while capacity remained");
+        }
+        assertEq(nft.remainingRewardCapacity(), 2500 ether - nft.totalAllocated() - nft.rewardReserve());
+        _assertSolvent();
+    }
+
+    function test_depositSplitBoundaryAroundRemainingCapacity() public {
+        nft.depositProceeds(2000 ether); // 1800 reserved, 700 capacity left.
+        assertEq(nft.remainingRewardCapacity(), 700 ether);
+        uint256 exact = uint256(700 ether) * 10 / 9;
+        assertEq(exact - exact / 10, 700 ether, "fixture: reward share must equal the capacity");
+        // A deposit whose 90% share exactly fills the capacity is an ordinary 90/10 split.
+        uint256 snapshot = vm.snapshotState();
+        vm.expectEmit(true, false, false, true);
+        emit Swarmlers.ProceedsDeposited(address(this), exact, 700 ether, exact / 10);
+        nft.depositProceeds(exact);
+        assertEq(nft.remainingRewardCapacity(), 0);
+        assertEq(nft.creatorCredit(), 200 ether + exact / 10);
+        assertTrue(vm.revertToState(snapshot));
+        // One more wei of reward share than capacity moves exactly one wei to the creator.
+        vm.expectEmit(true, false, false, true);
+        emit Swarmlers.ProceedsDeposited(address(this), exact + 1, 700 ether, exact / 10 + 1);
+        nft.depositProceeds(exact + 1);
+        assertEq(nft.remainingRewardCapacity(), 0);
+        assertEq(nft.creatorCredit(), 200 ether + exact / 10 + 1);
+        // At zero capacity every path (deposit, direct transfer, paid mint) credits the creator in full,
+        // and the holder-facing ledger is untouched.
+        uint256 credit = nft.creatorCredit();
+        uint256 reserve = nft.rewardReserve();
+        vm.expectEmit(true, false, false, true);
+        emit Swarmlers.ProceedsDeposited(address(this), 20, 0, 20);
+        nft.depositProceeds(20);
+        imd.transfer(address(nft), 5 ether);
+        nft.syncProceeds();
+        uint256 id = _mint(alice);
+        assertEq(nft.creatorCredit() - credit, 5.25 ether + 20);
+        assertEq(nft.rewardReserve(), reserve);
+        assertEq(nft.earned(id), 0);
+        skip(31 days);
+        assertEq(nft.earned(id), 1 ether, "a reserve at capacity still funds the new NFT");
+        nft.withdrawCreator();
+        assertEq(imd.balanceOf(CREATOR), nft.totalCreatorPaid());
+        _assertSolvent();
+    }
 }

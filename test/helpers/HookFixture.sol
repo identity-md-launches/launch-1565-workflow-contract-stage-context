@@ -24,8 +24,7 @@ abstract contract HookFixture is Fixture {
         token = new LaunchToken();
         manager = new PoolManager(address(this));
         actions = new V4Actions(manager);
-        deployer = new SwarmlerHookDeployer(address(this), address(nft), address(token));
-        deployer.setPoolManager(address(manager));
+        deployer = new SwarmlerHookDeployer(address(this), address(nft), address(token), address(manager));
         hook = _deployHook(deployer);
         key = hook.poolKey();
         manager.initialize(key, uint160(1 << 96));

@@ -30,6 +30,7 @@ contract MultiActorRewardsHandler is Test {
     uint256 public successfulClaims;
     uint256 public successfulSyncs;
     uint256 public successfulFreeClaims;
+    uint256 public overflowedDeposits;
 
     constructor(Swarmlers n, MockIMD t, SwarmlerActivity a, address r, address[4] memory accounts) {
         nft = n;
@@ -235,9 +236,23 @@ contract MultiActorRewardsHandler is Test {
         ++successfulClaims;
     }
 
+    /// @dev Reward credit so far is everything recognized that was not the creator's; the brief's cap of
+    ///      1 IMD for each of 2,500 NFTs bounds it, and whatever the 90% share cannot fit is the creator's.
+    ///      Computed from ghosts only, never from the collection's own counters.
+    function rewardCreditCapacity() public view returns (uint256) {
+        return 2500 ether - (recognized - creatorEntitlement);
+    }
+
     function _recognize(uint256 amount) internal {
+        uint256 creatorShare = amount / 10;
+        uint256 rewardShare = amount - creatorShare;
+        uint256 capacity = rewardCreditCapacity();
+        if (rewardShare > capacity) {
+            ++overflowedDeposits;
+            creatorShare += rewardShare - capacity;
+        }
         recognized += amount;
-        creatorEntitlement += amount / 10;
+        creatorEntitlement += creatorShare;
     }
 }
 
@@ -311,6 +326,9 @@ contract RewardsStatefulTest is Fixture {
         assertEq(earnedSum, nft.totalAllocated() + nft.rewardReserve() - pendingReserve);
         assertEq(claimedSum, handler.rewardsPaid());
         assertEq(pendingReserve + earnedSum + handler.creatorEntitlement(), handler.recognized());
+        // Reward credit never exceeds what 2,500 NFTs can earn, and the contract's view agrees with ghosts.
+        assertLe(handler.recognized() - handler.creatorEntitlement(), 2500 ether);
+        assertEq(nft.remainingRewardCapacity(), handler.rewardCreditCapacity());
         assertEq(nft.totalMinted(), supply);
         assertLe(supply, 2500);
         assertLe(first, supply + 1);
@@ -355,5 +373,34 @@ contract RewardsStatefulTest is Fixture {
         assertEq(handler.successfulSyncs(), 1);
         assertEq(handler.successfulFreeClaims(), 1);
         afterInvariant();
+    }
+
+    /// @dev The random campaign can reach lifetime capacity (64 deposits of up to 500 IMD); pin that path
+    ///      so the ghost model of the overflow is exercised whether or not the fuzzer finds it.
+    function test_handlerModelsFundingPastLifetimeCapacity() public {
+        handler.mint(0);
+        for (uint256 i; i < 5; ++i) {
+            handler.fund(i, uint128(500 ether));
+        }
+        assertEq(handler.overflowedDeposits(), 0);
+        assertEq(nft.remainingRewardCapacity(), 249.775 ether);
+        handler.fund(1, uint128(500 ether)); // 450 fits 249.775: 200.225 overflows to the creator.
+        assertEq(handler.overflowedDeposits(), 1);
+        assertEq(nft.remainingRewardCapacity(), 0);
+        assertEq(nft.creatorCredit(), 0.025 ether + 250 ether + 50 ether + 200.225 ether);
+        handler.donate(2, uint128(123 ether));
+        handler.advance(40 days);
+        handler.sync(); // Recognized after accrual: capacity is unchanged by the checkpoint.
+        assertEq(handler.overflowedDeposits(), 2);
+        handler.mint(3); // A paid mint at zero capacity is all creator share.
+        assertEq(handler.overflowedDeposits(), 3);
+        invariant_externalCashFlowsEqualCustodyAndLiabilities();
+        invariant_currentAndPendingEntitlementsAreBackedAndCapped();
+        handler.payCreator();
+        handler.claim(26);
+        assertEq(nft.claimed(26), 1 ether);
+        afterInvariant();
+        assertEq(nft.rewardReserve(), 2500 ether - 26 ether);
+        assertEq(nft.claimed(27), 0);
     }
 }

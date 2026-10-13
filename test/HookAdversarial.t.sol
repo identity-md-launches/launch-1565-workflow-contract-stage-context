@@ -45,8 +45,7 @@ contract HookAdversarialTest is HookFixture {
         }
         assertNotEq(selected, address(0), "could not construct requested currency order");
         token = LaunchToken(selected);
-        deployer = new SwarmlerHookDeployer(address(this), address(nft), selected);
-        deployer.setPoolManager(address(manager));
+        deployer = new SwarmlerHookDeployer(address(this), address(nft), selected, address(manager));
         hook = _deployHook(deployer);
         key = hook.poolKey();
         assertEq(Currency.unwrap(imdFirst ? key.currency0 : key.currency1), address(imd));
@@ -234,8 +233,8 @@ contract HookAdversarialTest is HookFixture {
 
     function test_collectionNotConfiguredLeavesForwardRetryable() public {
         Swarmlers fresh = new Swarmlers(address(this), address(activity));
-        SwarmlerHookDeployer factory = new SwarmlerHookDeployer(address(this), address(fresh), address(token));
-        factory.setPoolManager(address(manager));
+        SwarmlerHookDeployer factory =
+            new SwarmlerHookDeployer(address(this), address(fresh), address(token), address(manager));
         SwarmlerFeeHook freshHook = _deployHook(factory);
         imd.transfer(address(freshHook), 1 ether);
         vm.expectRevert(Swarmlers.RewardsNotConfigured.selector);
@@ -298,8 +297,8 @@ contract HookAdversarialTest is HookFixture {
     }
 
     function test_deployerOwnerHandoffRebindsInitCodeAndChildOwnership() public {
-        SwarmlerHookDeployer fresh = new SwarmlerHookDeployer(address(this), address(nft), address(token));
-        fresh.setPoolManager(address(manager));
+        SwarmlerHookDeployer fresh =
+            new SwarmlerHookDeployer(address(this), address(nft), address(token), address(manager));
         bytes memory code = type(SwarmlerFeeHook).creationCode;
         bytes32 priorHash = fresh.initCodeHash(code);
         fresh.transferOwnership(alice);
@@ -324,9 +323,77 @@ contract HookAdversarialTest is HookFixture {
         address deployed = fresh.deploy(code, salt);
         assertEq(deployed, expected);
         assertEq(SwarmlerFeeHook(deployed).owner(), alice);
-        vm.expectRevert(SwarmlerHookDeployer.AlreadyDeployed.selector);
+        assertEq(address(SwarmlerFeeHook(deployed).poolManager()), address(manager));
+        // A later owner handoff cannot re-run the one-time deployment or rebind the child.
         vm.prank(alice);
-        fresh.setPoolManager(address(manager));
+        fresh.transferOwnership(bob);
+        vm.prank(bob);
+        fresh.acceptOwnership();
+        vm.expectRevert(SwarmlerHookDeployer.AlreadyDeployed.selector);
+        vm.prank(bob);
+        fresh.deploy(code, salt);
+        assertEq(fresh.hook(), deployed);
+        assertEq(SwarmlerFeeHook(deployed).owner(), alice);
+    }
+
+    /// @dev The launch runs constructors on an empty chain, so the deployer must accept a PoolManager
+    ///      address that has no code yet and bind to it immutably once code exists there. Both views and
+    ///      the deployment refuse to run before that, and nothing can point the deployer elsewhere.
+    function test_managerArgumentIsImmutableAndOnlyUsableOnceItHasCode() public {
+        address futureManager = makeAddr("future pool manager");
+        bytes memory code = type(SwarmlerFeeHook).creationCode;
+        SwarmlerHookDeployer early =
+            new SwarmlerHookDeployer(address(this), address(nft), address(token), futureManager);
+        assertEq(early.poolManager(), futureManager);
+        vm.expectRevert(SwarmlerHookDeployer.PoolManagerNotDeployed.selector);
+        early.initCodeHash(code);
+        vm.expectRevert(SwarmlerHookDeployer.PoolManagerNotDeployed.selector);
+        early.predict(code, bytes32(0));
+        vm.expectRevert(SwarmlerHookDeployer.PoolManagerNotDeployed.selector);
+        early.deploy(code, bytes32(0));
+        assertEq(early.hook(), address(0));
+        // Ownership changes do not substitute for the missing manager.
+        early.transferOwnership(alice);
+        vm.prank(alice);
+        early.acceptOwnership();
+        vm.expectRevert(SwarmlerHookDeployer.PoolManagerNotDeployed.selector);
+        vm.prank(alice);
+        early.deploy(code, bytes32(0));
+        // Once the chain has a manager at that address, the child binds to it and to nothing else.
+        vm.etch(futureManager, address(manager).code);
+        bytes32 hash = early.initCodeHash(code);
+        assertEq(
+            hash,
+            keccak256(abi.encodePacked(code, abi.encode(alice, futureManager, address(nft), address(token))))
+        );
+        (bytes32 salt, address expected) = new MineHookSalt().run(address(early), hash, 0, 1_000_000);
+        assertEq(early.predict(code, salt), expected);
+        vm.prank(alice);
+        SwarmlerFeeHook child = SwarmlerFeeHook(early.deploy(code, salt));
+        assertEq(address(child), expected);
+        assertEq(address(child.poolManager()), futureManager);
+        assertEq(child.owner(), alice);
+        PoolKey memory childKey = child.poolKey();
+        assertEq(address(childKey.hooks), address(child));
+        // The real manager in this test environment is a different contract and is refused by the child.
+        vm.expectRevert(SwarmlerFeeHook.OnlyPoolManager.selector);
+        vm.prank(address(manager));
+        child.beforeInitialize(address(this), childKey, uint160(1 << 96));
+        vm.prank(futureManager);
+        child.beforeInitialize(alice, childKey, uint160(1 << 96));
+    }
+
+    /// @dev Different manager arguments must produce different child addresses: the manifest's manager
+    ///      choice is attested through the init-code hash, not configurable afterwards.
+    function test_managerArgumentChangesTheChildAddress() public {
+        bytes memory code = type(SwarmlerFeeHook).creationCode;
+        address other = makeAddr("other manager");
+        vm.etch(other, address(manager).code);
+        SwarmlerHookDeployer a =
+            new SwarmlerHookDeployer(address(this), address(nft), address(token), address(manager));
+        SwarmlerHookDeployer b = new SwarmlerHookDeployer(address(this), address(nft), address(token), other);
+        assertNotEq(a.initCodeHash(code), b.initCodeHash(code));
+        assertNotEq(a.predict(code, bytes32(0)), b.predict(code, bytes32(0)));
     }
 
     function test_hookAndDeployerCannotBeRenouncedAndOnlyOwnerChangesPrice() public {
