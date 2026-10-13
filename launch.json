@@ -1,0 +1,39 @@
+{
+  "kind": "evm_project",
+  "token": {
+    "contract": "LaunchToken",
+    "name": "Swarmlers",
+    "symbol": "SWARMLER",
+    "decimals": 18
+  },
+  "contracts": [
+    {
+      "contract": "SwarmlerActivity",
+      "constructorArgs": [
+        "$owner"
+      ]
+    },
+    {
+      "contract": "Swarmlers",
+      "constructorArgs": [
+        "$owner",
+        "$contract:SwarmlerActivity"
+      ]
+    },
+    {
+      "contract": "SwarmlerHookDeployer",
+      "constructorArgs": [
+        "$owner",
+        "$contract:Swarmlers",
+        "$token"
+      ]
+    }
+  ],
+  "pool": {
+    "pairedCurrency": "0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7",
+    "fee": 12500,
+    "tickSpacing": 60,
+    "initialPrice": "79228162514264337593543950336"
+  },
+  "notes": "LaunchToken is the Swarmlers ERC-20, distinct from the Swarmlers NFT collection. All three application owners resolve through $owner. SwarmlerActivity verifies current Identity MD ownership and owner-appointed reporter attestations of recent activity. Swarmlers provides NFT minting, on-chain artwork, dynamic metadata and funded holding-time rewards capped at 1 IMD per NFT for its lifetime; unclaimed rewards follow the NFT. The constructor mints the 25 creator NFTs to the fixed recipient specified in the approved brief. Public minting remains closed until the owner configures the activity reporter and one-time reward duration, then opens minting. SwarmlerHookDeployer pins SwarmlerFeeHook creation code and permits the owner to configure a PoolManager and deploy that child later using a permission-compatible CREATE2 salt. The child is not a direct project deployment. It routes realized LP fees from a separate pool; token-side fees require conversion at an owner-set IMD price before forwarding. The factory's launch pool uses its initialization-only guard and fixed fee beneficiaries. Redirecting 90% of that launch pool's trading fees to NFT rewards is unsupported and remains an unresolved policy/application conflict for independent review. The manifest contains no initialization calls. Its initialPrice is the required reference value; the service derives the launch opening price from policy. Source publication, signed artifact linkage, admission, deployment and frontend publication are subsequent service responsibilities."
+}
